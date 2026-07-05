@@ -43,6 +43,10 @@
 build/
 Build/
 build-*/
+install/
+log/
+bin/
+lib/
 
 # CMake generated files
 CMakeFiles/
