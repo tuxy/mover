@@ -1,0 +1,6 @@
+/target
+.flake.lock
+.direnv
+*.o
+*.elf
+*.uf2

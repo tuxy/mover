@@ -2,4 +2,5 @@
 	(version 7)
 	(lib (name "ki-lime-pi-pico") (type "KiCad") (uri "${KIPRJMOD}/pcb/project-libraries/ki-lime-pi-pico") (options "") (descr ""))
 	(lib (name "Twenty") (type "KiCad") (uri "${KIPRJMOD}/Twenty.pretty") (options "") (descr ""))
+	(lib (name "TB6612") (type "KiCad") (uri "${KIPRJMOD}/TB6612.pretty") (options "") (descr ""))
 )
