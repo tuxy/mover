@@ -2,6 +2,7 @@
 #![no_main]
 
 mod motor;
+mod system;
 mod usb;
 
 use core::cell::RefCell;
@@ -10,9 +11,15 @@ use embedded_hal::delay::DelayNs;
 use hal::pac;
 use hal::pac::interrupt;
 use panic_halt as _;
+use rp2040_hal::usb::UsbBus;
 use rp2040_hal::{self as hal, gpio};
+use usb_device::device::{StringDescriptors, UsbVidPid};
+use usb_device::{bus::UsbBusAllocator, device::UsbDeviceBuilder};
+use usbd_serial::SerialPort;
 
 use crate::motor::{ErasedOutputPin, MotorDirection, OpenMotorController};
+use crate::system::System;
+use crate::usb::UsbSerial;
 
 const XTAL_FREQ_HZ: u32 = 12_000_000;
 const PWM_TOP: u16 = 65535;
@@ -44,34 +51,11 @@ macro_rules! setup_motor {
 
 #[hal::entry]
 fn main() -> ! {
-    // Pico setup (should not modify)
-    let mut pac = pac::Peripherals::take().unwrap();
-    let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
+    let mut system = System::init();
+    let mut terminal = UsbSerial::new(system);
 
-    let clocks = hal::clocks::init_clocks_and_plls(
-        XTAL_FREQ_HZ,
-        pac.XOSC,
-        pac.CLOCKS,
-        pac.PLL_SYS,
-        pac.PLL_USB,
-        &mut pac.RESETS,
-        &mut watchdog,
-    )
-    .unwrap();
-
-    let mut timer = hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
-
-    let sio = hal::Sio::new(pac.SIO);
-    let pins = hal::gpio::Pins::new(
-        pac.IO_BANK0,
-        pac.PADS_BANK0,
-        sio.gpio_bank0,
-        &mut pac.RESETS,
-    );
-
-    // ── Encoder input setup ──────────────────────────────────────────────────
-    let enc_a = pins.gpio8.into_pull_up_input();
-    let enc_b = pins.gpio9.into_pull_up_input();
+    let enc_a = system.pins.gpio8.into_pull_up_input();
+    let enc_b = system.pins.gpio9.into_pull_up_input();
 
     enc_a.set_interrupt_enabled(gpio::Interrupt::EdgeHigh, true);
     enc_a.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
@@ -86,24 +70,16 @@ fn main() -> ! {
         pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
     }
 
-    // ── USB serial setup ─────────────────────────────────────────────────────
-    usb::init(pac.USBCTRL_REGS, pac.USBCTRL_DPRAM, clocks.usb_clock, &mut pac.RESETS);
-
-    unsafe {
-        pac::NVIC::unmask(pac::Interrupt::USBCTRL_IRQ);
-    }
-
-    // ── PWM & open-loop motor setup ──────────────────────────────────────────
-    let mut pwm_slices = hal::pwm::Slices::new(pac.PWM, &mut pac.RESETS);
+    let mut pwm_slices = hal::pwm::Slices::new(system.pac.PWM, &mut system.pac.RESETS);
 
     setup_motor!(
         motora_controller,
         pwm_slices.pwm5,
         channel_a,
-        pins.gpio10,
+        system.pins.gpio10,
         [
-            pins.gpio11.into_push_pull_output(),
-            pins.gpio12.into_push_pull_output()
+            system.pins.gpio11.into_push_pull_output(),
+            system.pins.gpio12.into_push_pull_output()
         ]
     );
 
@@ -111,38 +87,33 @@ fn main() -> ! {
         motorb_controller,
         pwm_slices.pwm6,
         channel_b,
-        pins.gpio13,
+        system.pins.gpio13,
         [
-            pins.gpio14.into_push_pull_output(),
-            pins.gpio15.into_push_pull_output()
+            system.pins.gpio14.into_push_pull_output(),
+            system.pins.gpio15.into_push_pull_output()
         ]
     );
 
-    // ── Wait for USB enumeration ─────────────────────────────────────────────
-    for _ in 0..5000 {
-        usb::poll();
-        if usb::is_configured() {
-            break;
-        }
-        timer.delay_us(1000);
-    }
+    // let _ = system.pins.gpio25.into_push_pull_output(); // LED
+    let mut counter: u32 = 0;
 
-    // ── Main loop ────────────────────────────────────────────────────────────
-    let mut main_timer: u32 = 0;
     loop {
-        usb::poll();
+        terminal.usb_dev.poll(&mut [&mut terminal.serial]);
 
         motora_controller.set_percentage(65535 / 2);
         motora_controller.set_direction(MotorDirection::Forward);
         motorb_controller.set_percentage(65535 / 2);
         motorb_controller.set_direction(MotorDirection::Reverse);
 
-        if main_timer % 50 == 0 {
-            let _ = usb::write("hello\n");
-        }
+        counter += 1;
+        let num = libm::sin(counter as f64);
+        let mut buffer = ryu::Buffer::new();
+        let num = buffer.format(num);
 
-        main_timer += 1;
-        timer.delay_ms(10);
+        let _ = terminal.serial.write(num.as_bytes());
+        let _ = terminal.serial.write(b"\n");
+
+        system.timer.delay_ms(10);
     }
 }
 
@@ -175,9 +146,4 @@ fn IO_IRQ_BANK0() {
             enc_b.clear_interrupt(gpio::Interrupt::EdgeLow);
         }
     }
-}
-
-#[interrupt]
-fn USBCTRL_IRQ() {
-    usb::poll();
 }

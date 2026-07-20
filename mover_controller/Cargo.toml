@@ -8,9 +8,11 @@ rust-version = "1.85"
 cortex-m-rt = "0.7"
 critical-section = "1.2.0"
 embedded-hal = "1.0"
+libm = "0.2.16"
 panic-halt = "0.2"
 rp2040-boot2 = "0.3"
 rp2040-hal = { version = "0.10", features = ["critical-section-impl", "rt"] }
+ryu = "1.0.23"
 usb-device = "0.3.2"
 usbd-serial = "0.2.2"
 
