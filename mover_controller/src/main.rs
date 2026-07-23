@@ -8,27 +8,22 @@ mod usb;
 use core::cell::RefCell;
 use critical_section::Mutex;
 use embedded_hal::delay::DelayNs;
-use hal::pac;
+use embedded_hal::digital::OutputPin;
 use hal::pac::interrupt;
 use panic_halt as _;
-use rp2040_hal::usb::UsbBus;
 use rp2040_hal::{self as hal, gpio};
-use usb_device::device::{StringDescriptors, UsbVidPid};
-use usb_device::{bus::UsbBusAllocator, device::UsbDeviceBuilder};
-use usbd_serial::SerialPort;
 
 use crate::motor::{ErasedOutputPin, MotorDirection, OpenMotorController};
 use crate::system::System;
 use crate::usb::UsbSerial;
 
-const XTAL_FREQ_HZ: u32 = 12_000_000;
 const PWM_TOP: u16 = 65535;
+const PPR: f32 = 468.0;
 
 #[link_section = ".boot2"]
 #[used]
 static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 
-// ── Encoder interrupt types ──────────────────────────────────────────────────
 type EncoderPinA = gpio::Pin<gpio::bank0::Gpio8, gpio::FunctionSioInput, gpio::PullUp>;
 type EncoderPinB = gpio::Pin<gpio::bank0::Gpio9, gpio::FunctionSioInput, gpio::PullUp>;
 type EncoderPins = (EncoderPinA, EncoderPinB);
@@ -52,8 +47,11 @@ macro_rules! setup_motor {
 #[hal::entry]
 fn main() -> ! {
     let mut system = System::init();
-    let mut terminal = UsbSerial::new(system);
 
+    // Steal PAC for peripherals consumed after System::init
+    let mut pac = unsafe { hal::pac::Peripherals::steal() };
+
+    // Encoder inputs
     let enc_a = system.pins.gpio8.into_pull_up_input();
     let enc_b = system.pins.gpio9.into_pull_up_input();
 
@@ -67,10 +65,19 @@ fn main() -> ! {
     });
 
     unsafe {
-        pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0);
+        hal::pac::NVIC::unmask(hal::pac::Interrupt::IO_IRQ_BANK0);
     }
 
-    let mut pwm_slices = hal::pwm::Slices::new(system.pac.PWM, &mut system.pac.RESETS);
+    // USB serial
+    let mut terminal = UsbSerial::new(
+        pac.USBCTRL_REGS,
+        pac.USBCTRL_DPRAM,
+        system.clocks.usb_clock,
+        &mut pac.RESETS,
+    );
+
+    // Motors
+    let mut pwm_slices = hal::pwm::Slices::new(pac.PWM, &mut pac.RESETS);
 
     setup_motor!(
         motora_controller,
@@ -94,24 +101,47 @@ fn main() -> ! {
         ]
     );
 
-    // let _ = system.pins.gpio25.into_push_pull_output(); // LED
+    // Main loop
+    let mut led_pin = system.pins.gpio25.into_push_pull_output();
     let mut counter: u32 = 0;
 
     loop {
-        terminal.usb_dev.poll(&mut [&mut terminal.serial]);
+        terminal.poll();
 
-        motora_controller.set_percentage(65535 / 2);
+        motora_controller.set_percentage(PWM_TOP / 2);
         motora_controller.set_direction(MotorDirection::Forward);
-        motorb_controller.set_percentage(65535 / 2);
+        motorb_controller.set_percentage(PWM_TOP / 2);
         motorb_controller.set_direction(MotorDirection::Reverse);
 
         counter += 1;
-        let num = libm::sin(counter as f64);
-        let mut buffer = ryu::Buffer::new();
-        let num = buffer.format(num);
+        if terminal.is_configured() && counter % 10 == 0 {
+            let mut buffer_a = itoa::Buffer::new();
+            let mut buffer_b = itoa::Buffer::new();
 
-        let _ = terminal.serial.write(num.as_bytes());
-        let _ = terminal.serial.write(b"\n");
+            let (enc_a, enc_b) = critical_section::with(|cs| {
+                (
+                    *ENC_A_COUNTER.borrow(cs).borrow(),
+                    *ENC_B_COUNTER.borrow(cs).borrow(),
+                )
+            });
+
+            let start = "Encoder values: {";
+            let s_a = buffer_a.format(enc_a);
+            let s_b = buffer_b.format(enc_b);
+
+            match terminal.write(start.as_bytes()) {
+                Ok(_) => {
+                    let _ = terminal.write(s_a.as_bytes());
+                    let _ = terminal.write(b", ");
+                    let _ = terminal.write(s_b.as_bytes());
+                    let _ = terminal.write(b"}\n");
+                    let _ = led_pin.set_high();
+                }
+                _ => {
+                    let _ = led_pin.set_low();
+                }
+            }
+        }
 
         system.timer.delay_ms(10);
     }
@@ -130,19 +160,19 @@ fn IO_IRQ_BANK0() {
 
     if let Some((enc_a, enc_b)) = PINS {
         if enc_a.interrupt_status(gpio::Interrupt::EdgeHigh) {
-            let _ = critical_section::with(|cs| *ENC_A_COUNTER.borrow(cs).borrow_mut() += 1);
+            critical_section::with(|cs| *ENC_A_COUNTER.borrow(cs).borrow_mut() += 1);
             enc_a.clear_interrupt(gpio::Interrupt::EdgeHigh);
         }
         if enc_a.interrupt_status(gpio::Interrupt::EdgeLow) {
-            let _ = critical_section::with(|cs| *ENC_A_COUNTER.borrow(cs).borrow_mut() += 1);
+            critical_section::with(|cs| *ENC_A_COUNTER.borrow(cs).borrow_mut() += 1);
             enc_a.clear_interrupt(gpio::Interrupt::EdgeLow);
         }
         if enc_b.interrupt_status(gpio::Interrupt::EdgeHigh) {
-            let _ = critical_section::with(|cs| *ENC_B_COUNTER.borrow(cs).borrow_mut() += 1);
+            critical_section::with(|cs| *ENC_B_COUNTER.borrow(cs).borrow_mut() += 1);
             enc_b.clear_interrupt(gpio::Interrupt::EdgeHigh);
         }
         if enc_b.interrupt_status(gpio::Interrupt::EdgeLow) {
-            let _ = critical_section::with(|cs| *ENC_B_COUNTER.borrow(cs).borrow_mut() += 1);
+            critical_section::with(|cs| *ENC_B_COUNTER.borrow(cs).borrow_mut() += 1);
             enc_b.clear_interrupt(gpio::Interrupt::EdgeLow);
         }
     }

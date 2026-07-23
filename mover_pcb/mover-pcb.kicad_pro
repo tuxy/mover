@@ -552,10 +552,6 @@
       },
       {
         "netclass": "High Current",
-        "pattern": "GND"
-      },
-      {
-        "netclass": "High Current",
         "pattern": "Motor*"
       }
     ]
@@ -688,7 +684,7 @@
         "uuid": "0a0950b3-4901-49a9-9c3d-4ab815b09671"
       }
     ],
-    "used_designators": "#PWR2,J4",
+    "used_designators": "R1,Q1-2",
     "variants": []
   },
   "sheets": [
