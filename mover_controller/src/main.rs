@@ -18,15 +18,15 @@ use crate::system::System;
 use crate::usb::UsbSerial;
 
 const PWM_TOP: u16 = 65535;
-const PPR: f32 = 468.0;
+const PPR: f32 = 465.0;
 
 #[link_section = ".boot2"]
 #[used]
 static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 
-type EncoderPinA = gpio::Pin<gpio::bank0::Gpio8, gpio::FunctionSioInput, gpio::PullUp>;
-type EncoderPinB = gpio::Pin<gpio::bank0::Gpio9, gpio::FunctionSioInput, gpio::PullUp>;
-type EncoderPins = (EncoderPinA, EncoderPinB);
+type EncoderPinA = gpio::Pin<gpio::bank0::Gpio9, gpio::FunctionSioInput, gpio::PullUp>;
+type EncoderPinB = gpio::Pin<gpio::bank0::Gpio8, gpio::FunctionSioInput, gpio::PullUp>;
+type EncoderPins = (EncoderPinB, EncoderPinA);
 
 static ENCODER_PINS: Mutex<RefCell<Option<EncoderPins>>> = Mutex::new(RefCell::new(None));
 static ENC_A_COUNTER: Mutex<RefCell<u32>> = Mutex::new(RefCell::new(0));
@@ -37,6 +37,7 @@ macro_rules! setup_motor {
         let pwm = &mut $pwm;
         pwm.default_config();
         pwm.set_top(PWM_TOP);
+        pwm.enable();
         let en = &mut pwm.$chan;
         en.output_to($ena_pin);
         let pins: [ErasedOutputPin; 2] = [$in1.into_dyn_pin(), $in2.into_dyn_pin()];
@@ -47,6 +48,9 @@ macro_rules! setup_motor {
 #[hal::entry]
 fn main() -> ! {
     let mut system = System::init();
+
+    // stby pin
+    let _ = system.pins.gpio7.into_push_pull_output().set_high();
 
     // Steal PAC for peripherals consumed after System::init
     let mut pac = unsafe { hal::pac::Peripherals::steal() };
@@ -114,22 +118,25 @@ fn main() -> ! {
         motorb_controller.set_direction(MotorDirection::Reverse);
 
         counter += 1;
-        if terminal.is_configured() && counter % 10 == 0 {
-            let mut buffer_a = itoa::Buffer::new();
-            let mut buffer_b = itoa::Buffer::new();
+        if terminal.is_configured() && counter % 100 == 0 {
+            let mut buffer_a = ryu::Buffer::new();
+            let mut buffer_b = ryu::Buffer::new();
 
             let (enc_a, enc_b) = critical_section::with(|cs| {
-                (
-                    *ENC_A_COUNTER.borrow(cs).borrow(),
-                    *ENC_B_COUNTER.borrow(cs).borrow(),
-                )
+                let a = *ENC_A_COUNTER.borrow(cs).borrow();
+                let b = *ENC_B_COUNTER.borrow(cs).borrow();
+                *ENC_A_COUNTER.borrow(cs).borrow_mut() = 0;
+                *ENC_B_COUNTER.borrow(cs).borrow_mut() = 0;
+                (a, b)
             });
 
-            let start = "Encoder values: {";
-            let s_a = buffer_a.format(enc_a);
-            let s_b = buffer_b.format(enc_b);
+            let rpm_a = (enc_a as f32) / PPR * 60.0;
+            let rpm_b = (enc_b as f32) / PPR * 60.0;
 
-            match terminal.write(start.as_bytes()) {
+            let s_a = buffer_a.format(rpm_a);
+            let s_b = buffer_b.format(rpm_b);
+
+            match terminal.write(b"rpm: {") {
                 Ok(_) => {
                     let _ = terminal.write(s_a.as_bytes());
                     let _ = terminal.write(b", ");

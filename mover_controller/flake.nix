@@ -44,7 +44,7 @@
           cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
             src = ./.;
             name = "${pname}-cargo-deps";
-            hash = "sha256-KICHwPqOXm3LYtU3T7nXbi2pPtQ+bWqze12ihpHhDSw=";
+            hash = "sha256-a9HYm20CY9NlPTUVtVZhtjt5QrW404CVoXh8bn0fqVQ=";
           };
 
           dontConfigure = true;
