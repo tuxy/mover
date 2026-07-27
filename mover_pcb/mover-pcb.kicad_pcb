@@ -4252,7 +4252,7 @@
 		)
 	)
 	(gr_text "Lights"
-		(at 113.5 102.5 270)
+		(at 111.25 102.25 270)
 		(layer "F.SilkS")
 		(uuid "a6f3d0c4-fefe-4f34-a906-b1ff54f7678b")
 		(effects

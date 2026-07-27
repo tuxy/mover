@@ -1,5 +1,6 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="mover">
+        <xacro:include filename="wheel.xacro" />
         <link name="world"></link>
 
         <joint name="base_joint" type="fixed">
@@ -13,7 +14,7 @@
                         <geometry>
                                 <cylinder length="0.07" radius="0.16"/>
                         </geometry>
-                        <material>
+                        <material name="gray">
                                 <color rgba="0.5 0.5 0.5 1"/>
                         </material>
                 </visual>

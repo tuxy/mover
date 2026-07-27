@@ -55,6 +55,10 @@ impl UsbSerial {
         self.serial.write(data)
     }
 
+    pub fn read(&mut self, buf: &mut [u8]) -> core::result::Result<usize, UsbError> {
+        self.serial.read(buf)
+    }
+
     pub fn is_configured(&self) -> bool {
         self.usb_dev.state() == UsbDeviceState::Configured
     }

@@ -1,11 +1,24 @@
+use core::ops::Not;
 use embedded_hal::{digital::OutputPin, pwm::SetDutyCycle};
 use rp2040_hal::gpio::{DynPinId, FunctionSio, Pin, PullDown, SioOutput};
 
 pub type ErasedOutputPin = Pin<DynPinId, FunctionSio<SioOutput>, PullDown>;
 
+#[derive(Clone, Copy)]
 pub enum MotorDirection {
     Forward,
     Reverse,
+}
+
+impl Not for MotorDirection {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            MotorDirection::Forward => MotorDirection::Reverse,
+            MotorDirection::Reverse => MotorDirection::Forward,
+        }
+    }
 }
 
 pub struct OpenMotorController<P>
